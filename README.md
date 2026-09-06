@@ -18,9 +18,9 @@ MVP `0.1.0` قيد التطوير. الأساس الحالي يشمل:
 ## Stack
 
 - Android / Kotlin
-- Jetpack Compose
+- Jetpack Compose 1.11 (BOM 2026.04.01)
 - Android Gradle Plugin 9.2.1
-- compileSdk 37 / targetSdk 36 / minSdk 24
+- compileSdk 36 / targetSdk 36 / minSdk 24
 - Chaquopy 17.0 + Python 3.13
 - SQLite
 - Telegram Bot API
@@ -29,7 +29,7 @@ MVP `0.1.0` قيد التطوير. الأساس الحالي يشمل:
 
 1. افتح المشروع في Android Studio حديث.
 2. استخدم JDK 17 وGradle 9.4.1.
-3. تأكد من تثبيت Android SDK Platform 37 وBuild Tools 36.0.0.
+3. تأكد من تثبيت Android SDK Platform 36 وBuild Tools 36.0.0.
 4. شغّل التطبيق على جهاز `arm64-v8a` أو محاكي `x86_64`.
 5. أنشئ Bot من BotFather وأضف Token داخل التطبيق.
 6. أضف البوت إلى المجموعة/القناة بالصلاحيات اللازمة.
