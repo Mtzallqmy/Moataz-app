@@ -208,7 +208,13 @@ class TelegramNodeService : Service() {
             Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
-        return Notification.Builder(this, CHANNEL_ID)
+        val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            Notification.Builder(this, CHANNEL_ID)
+        } else {
+            @Suppress("DEPRECATION")
+            Notification.Builder(this)
+        }
+        return builder
             .setContentTitle("Moataz Edge Node")
             .setContentText("Telegram Long Polling + Python runtime يعمل محليًا")
             .setSmallIcon(android.R.drawable.stat_notify_sync)
