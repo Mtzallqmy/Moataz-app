@@ -13,9 +13,14 @@ import android.os.SystemClock
 import com.moataz.edge.MainActivity
 import com.moataz.edge.data.ConfigStore
 import com.moataz.edge.data.NodeDatabase
+import com.moataz.edge.data.PluginStore
+import com.moataz.edge.data.RepoAppStore
 import com.moataz.edge.data.RouteConfig
 import com.moataz.edge.data.RouteStore
 import com.moataz.edge.python.PythonWorker
+import com.moataz.edge.python.RepoPythonWorker
+import com.moataz.edge.python.WorkerExecution
+import com.moataz.edge.repo.GitHubRepoManager
 import com.moataz.edge.telegram.TelegramBotApi
 import com.moataz.edge.telegram.TelegramUpdate
 import java.util.concurrent.atomic.AtomicBoolean
@@ -27,11 +32,24 @@ class TelegramNodeService : Service() {
     private lateinit var config: ConfigStore
     private lateinit var routes: RouteStore
     private lateinit var database: NodeDatabase
+    private lateinit var plugins: PluginStore
+    private lateinit var repoApps: RepoAppStore
     private lateinit var pythonWorker: PythonWorker
+    private lateinit var repoWorker: RepoPythonWorker
+    private lateinit var repoManager: GitHubRepoManager
+    private lateinit var pluginDispatcher: PluginDispatcher
 
     override fun onCreate() {
         super.onCreate()
-        config = ConfigStore(this); routes = RouteStore(this, config); database = NodeDatabase(this); pythonWorker = PythonWorker()
+        config = ConfigStore(this)
+        routes = RouteStore(this, config)
+        database = NodeDatabase(this)
+        plugins = PluginStore(this)
+        repoApps = RepoAppStore(this)
+        pythonWorker = PythonWorker()
+        repoWorker = RepoPythonWorker(repoApps)
+        repoManager = GitHubRepoManager(this, config, repoApps)
+        pluginDispatcher = PluginDispatcher(plugins, database)
         createNotificationChannel()
     }
 
@@ -46,7 +64,11 @@ class TelegramNodeService : Service() {
     }
 
     override fun onDestroy() {
-        running.set(false); workerThread?.interrupt(); workerThread = null; NodeRuntime.stopped(); super.onDestroy()
+        running.set(false)
+        workerThread?.interrupt()
+        workerThread = null
+        NodeRuntime.stopped()
+        super.onDestroy()
     }
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -54,6 +76,8 @@ class TelegramNodeService : Service() {
     private fun runLoop() {
         val token = config.botToken()
         if (token.isNullOrBlank()) { fail("لا يوجد Bot Token محفوظ"); return }
+
+        syncAutoRepoApps()
 
         val api = TelegramBotApi(token)
         var offset = config.telegramOffset()
@@ -68,7 +92,8 @@ class TelegramNodeService : Service() {
                     val latency = SystemClock.elapsedRealtime() - started
                     database.log("INFO", "Telegram connected as @${username ?: "unknown"} (${latency}ms)")
                     NodeRuntime.running(username, latency)
-                    connected = true; retryDelay = 2_000L
+                    connected = true
+                    retryDelay = 2_000L
                 }
 
                 processPendingQueue(api)
@@ -82,7 +107,8 @@ class TelegramNodeService : Service() {
                     database.log("INFO", "Received ${updates.size} Telegram update(s)")
                 }
             } catch (interrupted: InterruptedException) {
-                Thread.currentThread().interrupt(); return
+                Thread.currentThread().interrupt()
+                return
             } catch (error: Exception) {
                 connected = false
                 val message = error.message ?: error.javaClass.simpleName
@@ -92,6 +118,23 @@ class TelegramNodeService : Service() {
                 retryDelay = (retryDelay * 2).coerceAtMost(60_000L)
             }
         }
+    }
+
+    private fun syncAutoRepoApps() {
+        val now = System.currentTimeMillis()
+        val syncAge = 6L * 60L * 60L * 1000L
+        repoApps.all()
+            .filter { it.enabled && it.autoSync }
+            .filter { !repoApps.isInstalled(it.id) || now - it.lastSyncedAt >= syncAge }
+            .forEach { app ->
+                if (!running.get()) return
+                try {
+                    val result = repoManager.sync(app)
+                    database.log("REPO", "${app.name} synced ${result.versionHash} (${result.files} files)")
+                } catch (error: Exception) {
+                    database.log("WARN", "Repo sync ${app.name}: ${error.message}")
+                }
+            }
     }
 
     private fun processPendingQueue(api: TelegramBotApi) {
@@ -108,7 +151,7 @@ class TelegramNodeService : Service() {
                 var delivered = 0
                 for (route in matching) {
                     val execution = try {
-                        pythonWorker.processUpdate(route.worker, update.raw, route.workerConfigJson()).also { NodeRuntime.pythonCall(true) }
+                        executeWorker(route, update).also { NodeRuntime.pythonCall(true) }
                     } catch (error: Exception) {
                         NodeRuntime.pythonCall(false)
                         database.log("PYTHON_ERROR", "${route.name}: ${error.message}")
@@ -118,8 +161,7 @@ class TelegramNodeService : Service() {
                     database.log("PYTHON", "${route.name} • ${execution.note}")
                     if (!execution.shouldPass) continue
                     if (route.destination.isNotBlank()) {
-                        if (!execution.outputText.isNullOrBlank() && update.text != null) api.sendMessage(route.destination, execution.outputText)
-                        else api.copyMessage(route.destination, update.chatId, update.messageId)
+                        deliver(route, update, execution, api)
                         delivered += 1
                     }
                 }
@@ -128,6 +170,35 @@ class TelegramNodeService : Service() {
             } catch (error: Exception) {
                 database.markRetry(job.id, job.attempts, error.message ?: error.javaClass.simpleName)
                 database.log("WARN", "Job ${job.updateId} retry ${job.attempts + 1}: ${error.message}")
+            }
+        }
+    }
+
+    private fun executeWorker(route: RouteConfig, update: TelegramUpdate): WorkerExecution {
+        return if (route.worker.startsWith(REPO_WORKER_PREFIX)) {
+            val id = route.worker.removePrefix(REPO_WORKER_PREFIX)
+            val app = repoApps.get(id) ?: error("Repository app not found: $id")
+            repoWorker.processUpdate(app, update.raw, route.workerConfigJson())
+        } else {
+            pythonWorker.processUpdate(route.worker, update.raw, route.workerConfigJson())
+        }
+    }
+
+    private fun deliver(route: RouteConfig, update: TelegramUpdate, execution: WorkerExecution, api: TelegramBotApi) {
+        val destination = route.destination.trim()
+        when {
+            destination == SOURCE_DESTINATION -> {
+                if (!execution.outputText.isNullOrBlank()) api.sendMessage(update.chatId, execution.outputText)
+                else api.copyMessage(update.chatId, update.chatId, update.messageId)
+            }
+            destination.startsWith(PLUGIN_DESTINATION_PREFIX) -> {
+                val pluginId = destination.removePrefix(PLUGIN_DESTINATION_PREFIX)
+                val plugin = plugins.get(pluginId) ?: error("Plugin not found: $pluginId")
+                pluginDispatcher.deliver(plugin, route, update, execution.outputText)
+            }
+            else -> {
+                if (!execution.outputText.isNullOrBlank()) api.sendMessage(destination, execution.outputText)
+                else api.copyMessage(destination, update.chatId, update.messageId)
             }
         }
     }
@@ -144,11 +215,17 @@ class TelegramNodeService : Service() {
     }
 
     private fun fail(message: String) {
-        database.log("ERROR", message); NodeRuntime.error(message); running.set(false); stopSelf()
+        database.log("ERROR", message)
+        NodeRuntime.error(message)
+        running.set(false)
+        stopSelf()
     }
 
     private fun stopNode() {
-        running.set(false); workerThread?.interrupt(); stopForeground(STOP_FOREGROUND_REMOVE); stopSelf()
+        running.set(false)
+        workerThread?.interrupt()
+        stopForeground(STOP_FOREGROUND_REMOVE)
+        stopSelf()
     }
 
     private fun startAsForeground() {
@@ -165,7 +242,7 @@ class TelegramNodeService : Service() {
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else Notification.Builder(this)
         return builder
             .setContentTitle("Moataz Edge • ${config.nodeName()}")
-            .setContentText("Telegram + Python + Routes تعمل محليًا")
+            .setContentText("Telegram + GitHub Apps + Plugins تعمل محليًا")
             .setSmallIcon(com.moataz.edge.R.drawable.ic_edge_mark)
             .setOngoing(true)
             .setContentIntent(openApp)
@@ -182,6 +259,9 @@ class TelegramNodeService : Service() {
     companion object {
         const val ACTION_START = "com.moataz.edge.action.START_NODE"
         const val ACTION_STOP = "com.moataz.edge.action.STOP_NODE"
+        const val SOURCE_DESTINATION = "@source"
+        const val REPO_WORKER_PREFIX = "repo:"
+        const val PLUGIN_DESTINATION_PREFIX = "plugin:"
         private const val CHANNEL_ID = "edge_node_runtime"
         private const val NOTIFICATION_ID = 1001
     }

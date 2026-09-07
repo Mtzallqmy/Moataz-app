@@ -54,28 +54,32 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.moataz.edge.BuildConfig
 import com.moataz.edge.data.ConfigStore
 import com.moataz.edge.data.FailedJob
 import com.moataz.edge.data.LogEntry
 import com.moataz.edge.data.NodeDatabase
+import com.moataz.edge.data.PluginConfig
+import com.moataz.edge.data.PluginStore
 import com.moataz.edge.data.QueueStats
+import com.moataz.edge.data.RepoAppConfig
+import com.moataz.edge.data.RepoAppStore
 import com.moataz.edge.data.RouteConfig
 import com.moataz.edge.data.RouteStore
 import com.moataz.edge.runtime.DeviceMetrics
 import com.moataz.edge.runtime.DeviceMonitor
 import com.moataz.edge.runtime.NodeRuntime
 import com.moataz.edge.runtime.NodeStatus
+import com.moataz.edge.runtime.TelegramNodeService
 import com.moataz.edge.runtime.WorkerCatalog
 import kotlinx.coroutines.delay
 import java.text.DateFormat
 import java.util.Date
 
-private const val EDGE_VERSION = "0.2.0"
-
 private enum class EdgeTab(val title: String, val icon: EdgeIconType) {
     HOME("الرئيسية", EdgeIconType.HOME),
     FLOW("التدفق", EdgeIconType.FLOW),
-    WORKERS("العمال", EdgeIconType.WORKERS),
+    APPS("التطبيقات", EdgeIconType.WORKERS),
     DIAGNOSTICS("التشخيص", EdgeIconType.DIAGNOSTICS),
     SETTINGS("الإعدادات", EdgeIconType.SETTINGS)
 }
@@ -85,6 +89,8 @@ fun EdgeApp(
     config: ConfigStore,
     database: NodeDatabase,
     routeStore: RouteStore,
+    repoAppStore: RepoAppStore,
+    pluginStore: PluginStore,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit
@@ -94,6 +100,8 @@ fun EdgeApp(
     var tab by rememberSaveable { mutableStateOf(EdgeTab.HOME) }
     var metrics by remember { mutableStateOf(DeviceMetrics.EMPTY) }
     var routes by remember { mutableStateOf(routeStore.all()) }
+    var repoApps by remember { mutableStateOf(repoAppStore.all()) }
+    var plugins by remember { mutableStateOf(pluginStore.all()) }
     var queue by remember { mutableStateOf(database.queueStats()) }
     var logs by remember { mutableStateOf(database.recentLogs()) }
     var errors by remember { mutableStateOf(database.recentErrors()) }
@@ -103,6 +111,8 @@ fun EdgeApp(
     fun refresh() {
         metrics = monitor.snapshot()
         routes = routeStore.all()
+        repoApps = repoAppStore.all()
+        plugins = pluginStore.all()
         queue = database.queueStats()
         logs = database.recentLogs()
         errors = database.recentErrors()
@@ -122,7 +132,7 @@ fun EdgeApp(
             containerColor = MaterialTheme.colorScheme.background,
             bottomBar = {
                 NavigationBar(containerColor = Color(0xFF0A171F)) {
-                    EdgeTab.values().forEach { item ->
+                    EdgeTab.entries.forEach { item ->
                         NavigationBarItem(
                             selected = tab == item,
                             onClick = { tab = item },
@@ -136,14 +146,11 @@ fun EdgeApp(
             Column(Modifier.fillMaxSize().padding(padding)) {
                 BrandHeader(nodeName)
                 when (tab) {
-                    EdgeTab.HOME -> DashboardScreen(metrics, queue, logs, routes, onStart, onStop, onRestart)
-                    EdgeTab.FLOW -> FlowScreen(routes, routeStore) { refresh() }
-                    EdgeTab.WORKERS -> WorkersScreen()
-                    EdgeTab.DIAGNOSTICS -> DiagnosticsScreen(context, metrics, queue, errors, failed, database) { refresh() }
-                    EdgeTab.SETTINGS -> SettingsScreen(config, nodeName) {
-                        nodeName = config.nodeName()
-                        refresh()
-                    }
+                    EdgeTab.HOME -> DashboardScreen(metrics, queue, logs, routes, repoApps, plugins, onStart, onStop, onRestart)
+                    EdgeTab.FLOW -> FlowScreen(routes, routeStore, repoApps, plugins) { refresh() }
+                    EdgeTab.APPS -> AppsScreen(config, repoAppStore, pluginStore, repoApps, plugins) { refresh() }
+                    EdgeTab.DIAGNOSTICS -> DiagnosticsScreen(context, metrics, queue, errors, failed, repoApps, plugins, database) { refresh() }
+                    EdgeTab.SETTINGS -> SettingsScreen(config, nodeName) { nodeName = config.nodeName(); refresh() }
                 }
             }
         }
@@ -153,7 +160,7 @@ fun EdgeApp(
 @Composable
 private fun BrandHeader(nodeName: String) {
     Row(
-        modifier = Modifier.fillMaxWidth().background(Color(0xFF091820)).padding(horizontal = 18.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().background(Color(0xFF091820)).padding(horizontal = 18.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
         EdgeMark(Modifier.size(46.dp))
@@ -176,7 +183,7 @@ private fun StatusPill(status: NodeStatus) {
     }
     Row(
         verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier.clip(CircleShape).background(color.copy(alpha = 0.12f)).padding(horizontal = 10.dp, vertical = 6.dp)
+        modifier = Modifier.clip(CircleShape).background(color.copy(alpha = .12f)).padding(horizontal = 10.dp, vertical = 6.dp)
     ) {
         Box(Modifier.size(7.dp).clip(CircleShape).background(color))
         Spacer(Modifier.width(6.dp))
@@ -190,6 +197,8 @@ private fun DashboardScreen(
     queue: QueueStats,
     logs: List<LogEntry>,
     routes: List<RouteConfig>,
+    repoApps: List<RepoAppConfig>,
+    plugins: List<PluginConfig>,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onRestart: () -> Unit
@@ -202,9 +211,7 @@ private fun DashboardScreen(
             Column(Modifier.padding(18.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
                 Text("مركز التحكم", style = MaterialTheme.typography.headlineSmall)
                 Text(NodeRuntime.lastMessage, color = EdgeMuted)
-                NodeRuntime.botUsername?.let {
-                    Text("@$it", color = EdgeMint, fontWeight = FontWeight.SemiBold)
-                }
+                NodeRuntime.botUsername?.let { Text("@$it", color = EdgeMint, fontWeight = FontWeight.SemiBold) }
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     ActionButton("تشغيل", EdgeIconType.PLAY, NodeRuntime.status != NodeStatus.RUNNING, onStart)
                     ActionButton("إعادة", EdgeIconType.RESTART, true, onRestart)
@@ -227,19 +234,16 @@ private fun DashboardScreen(
             MetricCard("الشبكة", metrics.network, "حرارة: ${metrics.thermal}", Modifier.weight(1f))
         }
 
-        SectionTitle("صحة المحرك", "Telegram + Python + Queue + Routes")
-        HealthRow(
-            "Telegram",
-            if (NodeRuntime.status == NodeStatus.RUNNING) "متصل" else NodeRuntime.status.name,
-            NodeRuntime.telegramLatencyMs?.let { "${it}ms" } ?: "—",
-            NodeRuntime.status == NodeStatus.RUNNING
-        )
+        SectionTitle("صحة المحرك", "Telegram + GitHub Apps + Plugins + Queue")
+        HealthRow("Telegram", if (NodeRuntime.status == NodeStatus.RUNNING) "متصل" else NodeRuntime.status.name, NodeRuntime.telegramLatencyMs?.let { "${it}ms" } ?: "—", NodeRuntime.status == NodeStatus.RUNNING)
         HealthRow("Python 3.13", "${NodeRuntime.pythonCalls} استدعاء", "${NodeRuntime.pythonFailures} فشل", NodeRuntime.pythonFailures == 0L)
+        HealthRow("GitHub Apps", "${repoApps.count { it.enabled }} فعّال", "${repoApps.count { it.lastError.isNotBlank() }} خطأ مزامنة", repoApps.none { it.enabled && it.lastError.isNotBlank() })
+        HealthRow("Plugins", "${plugins.count { it.enabled }} فعّال", "${plugins.size} إجمالي", plugins.all { !it.enabled || it.endpoint.isBlank() || it.endpoint.startsWith("https://") })
         HealthRow("Queue", "${queue.pending} انتظار", "${queue.failed} فشل", queue.failed == 0)
         HealthRow("Routes", "${routes.count { it.enabled }} فعّال", "${routes.size} إجمالي", routes.any { it.enabled })
 
         SectionTitle("النشاط الأخير", "سجل مختصر قابل للتشخيص")
-        if (logs.isEmpty()) EmptyState("لا يوجد نشاط بعد") else logs.take(5).forEach { CompactLog(it) }
+        if (logs.isEmpty()) EmptyState("لا يوجد نشاط بعد") else logs.take(6).forEach { CompactLog(it) }
     }
 }
 
@@ -280,91 +284,134 @@ private fun HealthRow(name: String, value: String, detail: String, healthy: Bool
 }
 
 @Composable
-private fun FlowScreen(routes: List<RouteConfig>, store: RouteStore, onChanged: () -> Unit) {
+private fun FlowScreen(
+    routes: List<RouteConfig>,
+    store: RouteStore,
+    repoApps: List<RepoAppConfig>,
+    plugins: List<PluginConfig>,
+    onChanged: () -> Unit
+) {
     var name by rememberSaveable { mutableStateOf("") }
     var source by rememberSaveable { mutableStateOf("") }
-    var destination by rememberSaveable { mutableStateOf("") }
+    var destination by rememberSaveable { mutableStateOf(TelegramNodeService.SOURCE_DESTINATION) }
     var keyword by rememberSaveable { mutableStateOf("") }
     var worker by rememberSaveable { mutableStateOf("default_worker") }
-    var expanded by remember { mutableStateOf(false) }
+    var workerMenu by remember { mutableStateOf(false) }
+    var destinationMenu by remember { mutableStateOf(false) }
+
+    val workerOptions = buildList {
+        WorkerCatalog.workers.forEach { add(it.id to it.title) }
+        repoApps.filter { it.enabled }.forEach { add(it.workerId to "GitHub • ${it.name}") }
+    }
+    val destinationOptions = buildList {
+        add(TelegramNodeService.SOURCE_DESTINATION to "نفس محادثة المصدر")
+        plugins.filter { it.enabled }.forEach { add(it.destinationToken to "Plugin • ${it.name}") }
+    }
 
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        SectionTitle("خريطة التدفق", "رؤية واضحة لكل اتصال من المصدر حتى الوجهة")
+        SectionTitle("خريطة التدفق", "Telegram Source → Filter → Worker/Repository → Telegram أو Plugin")
         routes.forEach { route ->
             Card(colors = CardDefaults.cardColors(containerColor = EdgeSurfaceHigh), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text(route.name, style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                if (route.enabled) "مسار فعّال" else "متوقف",
-                                color = if (route.enabled) EdgeMint else EdgeMuted,
-                                style = MaterialTheme.typography.bodySmall
-                            )
+                            Text(if (route.enabled) "مسار فعّال" else "متوقف", color = if (route.enabled) EdgeMint else EdgeMuted, style = MaterialTheme.typography.bodySmall)
                         }
-                        Switch(checked = route.enabled, onCheckedChange = {
-                            store.setEnabled(route.id, it)
-                            onChanged()
-                        })
+                        Switch(checked = route.enabled, onCheckedChange = { store.setEnabled(route.id, it); onChanged() })
                     }
-                    FlowNode("المصدر", route.source.ifBlank { "أي محادثة" }, EdgeMint)
+                    FlowNode("المصدر", route.source.ifBlank { "أي محادثة Telegram" }, EdgeMint)
                     ConnectorLine()
                     if (route.keyword.isNotBlank()) {
                         FlowNode("الفلتر", "يحتوي: ${route.keyword}", EdgeGold)
                         ConnectorLine()
                     }
-                    FlowNode("Python Worker", WorkerCatalog.workers.firstOrNull { it.id == route.worker }?.title ?: route.worker, EdgeGold)
+                    FlowNode("المعالج", workerTitle(route.worker, repoApps), EdgeGold)
                     ConnectorLine()
-                    FlowNode("الوجهة", route.destination.ifBlank { "معالجة محلية فقط" }, EdgeMint)
-                    TextButton(onClick = {
-                        store.delete(route.id)
-                        onChanged()
-                    }) { Text("حذف المسار", color = EdgeDanger) }
+                    FlowNode("الوجهة", destinationTitle(route.destination, plugins), EdgeMint)
+                    TextButton(onClick = { store.delete(route.id); onChanged() }) { Text("حذف المسار", color = EdgeDanger) }
                 }
             }
         }
 
-        SectionTitle("إضافة مسار", "Source → Filter → Worker → Destination")
+        SectionTitle("إضافة مسار", "لإنشاء Bot من GitHub اختر Repository Worker ثم اجعل الوجهة: نفس محادثة المصدر")
         OutlinedTextField(name, { name = it }, Modifier.fillMaxWidth(), label = { Text("اسم المسار") }, singleLine = true)
-        OutlinedTextField(source, { source = it }, Modifier.fillMaxWidth(), label = { Text("Source chat ID أو @username") }, singleLine = true)
+        OutlinedTextField(source, { source = it }, Modifier.fillMaxWidth(), label = { Text("Source chat ID أو @username — فارغ لأي محادثة") }, singleLine = true)
         OutlinedTextField(keyword, { keyword = it }, Modifier.fillMaxWidth(), label = { Text("كلمة فلترة اختيارية") }, singleLine = true)
+
         Box {
-            OutlinedButton(onClick = { expanded = true }, modifier = Modifier.fillMaxWidth()) {
-                Text("Worker: ${WorkerCatalog.workers.first { it.id == worker }.title}")
+            OutlinedButton(onClick = { workerMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("Worker: ${workerOptions.firstOrNull { it.first == worker }?.second ?: worker}")
             }
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
-                WorkerCatalog.workers.forEach { definition ->
-                    DropdownMenuItem(text = { Text(definition.title) }, onClick = {
-                        worker = definition.id
-                        expanded = false
-                    })
+            DropdownMenu(expanded = workerMenu, onDismissRequest = { workerMenu = false }) {
+                workerOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.second) },
+                        onClick = { worker = option.first; workerMenu = false }
+                    )
                 }
             }
         }
-        OutlinedTextField(destination, { destination = it }, Modifier.fillMaxWidth(), label = { Text("Destination chat ID أو @channel") }, singleLine = true)
+
+        Box {
+            OutlinedButton(onClick = { destinationMenu = true }, modifier = Modifier.fillMaxWidth()) {
+                Text("وجهة سريعة: ${destinationOptions.firstOrNull { it.first == destination }?.second ?: "Telegram/Custom"}")
+            }
+            DropdownMenu(expanded = destinationMenu, onDismissRequest = { destinationMenu = false }) {
+                destinationOptions.forEach { option ->
+                    DropdownMenuItem(
+                        text = { Text(option.second) },
+                        onClick = { destination = option.first; destinationMenu = false }
+                    )
+                }
+            }
+        }
+        OutlinedTextField(
+            destination,
+            { destination = it },
+            Modifier.fillMaxWidth(),
+            label = { Text("Destination: @source أو Telegram chat أو plugin:<id>") },
+            singleLine = true
+        )
         Button(
             onClick = {
                 store.add(name, source, destination, worker, keyword)
-                name = ""
-                source = ""
-                destination = ""
-                keyword = ""
+                name = ""; source = ""; destination = TelegramNodeService.SOURCE_DESTINATION; keyword = ""
                 onChanged()
             },
-            modifier = Modifier.fillMaxWidth()
+            modifier = Modifier.fillMaxWidth(),
+            enabled = workerOptions.any { it.first == worker }
         ) { Text("إنشاء المسار") }
     }
+}
+
+private fun workerTitle(worker: String, repoApps: List<RepoAppConfig>): String {
+    WorkerCatalog.workers.firstOrNull { it.id == worker }?.let { return it.title }
+    if (worker.startsWith(TelegramNodeService.REPO_WORKER_PREFIX)) {
+        val id = worker.removePrefix(TelegramNodeService.REPO_WORKER_PREFIX)
+        return repoApps.firstOrNull { it.id == id }?.let { "GitHub • ${it.name}" } ?: "GitHub Repository غير موجود"
+    }
+    return worker
+}
+
+private fun destinationTitle(destination: String, plugins: List<PluginConfig>): String {
+    if (destination == TelegramNodeService.SOURCE_DESTINATION) return "نفس محادثة المصدر"
+    if (destination.startsWith(TelegramNodeService.PLUGIN_DESTINATION_PREFIX)) {
+        val id = destination.removePrefix(TelegramNodeService.PLUGIN_DESTINATION_PREFIX)
+        return plugins.firstOrNull { it.id == id }?.let { "Plugin • ${it.name}" } ?: "Plugin غير موجود"
+    }
+    return destination.ifBlank { "معالجة محلية فقط" }
 }
 
 @Composable
 private fun FlowNode(label: String, value: String, color: Color) {
     Surface(
-        color = color.copy(alpha = 0.08f),
+        color = color.copy(alpha = .08f),
         shape = MaterialTheme.shapes.medium,
-        border = BorderStroke(1.dp, color.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, color.copy(alpha = .35f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Row(Modifier.padding(13.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -384,47 +431,14 @@ private fun ConnectorLine() {
 }
 
 @Composable
-private fun WorkersScreen() {
-    Column(
-        Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
-    ) {
-        SectionTitle("Workers المحلية", "كلها داخل APK ولا تحتاج pip أو سيرفر خارجي")
-        WorkerCatalog.workers.forEach { worker ->
-            Card(colors = CardDefaults.cardColors(containerColor = EdgeSurfaceHigh), modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(16.dp), verticalAlignment = Alignment.CenterVertically) {
-                    EdgeIcon(EdgeIconType.WORKERS, Modifier.size(28.dp), EdgeGold)
-                    Spacer(Modifier.width(12.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text(worker.title, style = MaterialTheme.typography.titleMedium)
-                        Text(worker.description, color = EdgeMuted)
-                        Text(worker.capability, color = EdgeMint, style = MaterialTheme.typography.bodySmall)
-                    }
-                }
-            }
-        }
-        SectionTitle("Runtime Pack", "مكتبات مثبتة وقت بناء APK")
-        WorkerCatalog.runtimeLibraries.forEach { library ->
-            Card(colors = CardDefaults.cardColors(containerColor = EdgeSurface), modifier = Modifier.fillMaxWidth()) {
-                Row(Modifier.padding(14.dp)) {
-                    Column(Modifier.weight(1f)) {
-                        Text(library.name, fontWeight = FontWeight.SemiBold)
-                        Text(library.purpose, color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
-                    }
-                    Text(library.version, color = EdgeMint)
-                }
-            }
-        }
-    }
-}
-
-@Composable
 private fun DiagnosticsScreen(
     context: Context,
     metrics: DeviceMetrics,
     queue: QueueStats,
     errors: List<LogEntry>,
     failed: List<FailedJob>,
+    repoApps: List<RepoAppConfig>,
+    plugins: List<PluginConfig>,
     database: NodeDatabase,
     onChanged: () -> Unit
 ) {
@@ -432,58 +446,50 @@ private fun DiagnosticsScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        SectionTitle("التشخيص", "أسباب واضحة بدل رسائل خام")
+        SectionTitle("التشخيص", "Telegram وPython وGitHub Apps والـPlugins في تقرير واحد")
         Card(colors = CardDefaults.cardColors(containerColor = EdgeSurfaceHigh), modifier = Modifier.fillMaxWidth()) {
             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text("حالة العقدة", style = MaterialTheme.typography.titleMedium)
                 Text("الحالة: ${NodeRuntime.status}")
                 Text("إعادات الاتصال: ${NodeRuntime.reconnects}")
                 Text("Python failures: ${NodeRuntime.pythonFailures}")
+                Text("GitHub Apps: ${repoApps.size} • أخطاء ${repoApps.count { it.lastError.isNotBlank() }}")
+                Text("Plugins: ${plugins.size} • فعالة ${plugins.count { it.enabled }}")
                 Text("RAM: ${metrics.appRamMb} MB • CPU: ${metrics.appCpuPercent}%")
                 Text("Battery: ${metrics.batteryPercent}% • Thermal: ${metrics.thermal}")
             }
         }
-
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            OutlinedButton(onClick = {
-                database.retryAllFailed()
-                onChanged()
-            }, enabled = failed.isNotEmpty()) { Text("إعادة الفاشلة") }
-            OutlinedButton(onClick = {
-                database.clearCompleted()
-                onChanged()
-            }) { Text("تنظيف المكتملة") }
+            OutlinedButton(onClick = { database.retryAllFailed(); onChanged() }, enabled = failed.isNotEmpty()) { Text("إعادة الفاشلة") }
+            OutlinedButton(onClick = { database.clearCompleted(); onChanged() }) { Text("تنظيف المكتملة") }
         }
-        OutlinedButton(
-            onClick = { copyDiagnostics(context, metrics, queue, errors) },
-            modifier = Modifier.fillMaxWidth()
-        ) { Text("نسخ تقرير التشخيص") }
+        OutlinedButton(onClick = copyDiagnostics(context, metrics, queue, errors, repoApps, plugins), modifier = Modifier.fillMaxWidth()) { Text("نسخ تقرير التشخيص") }
 
+        repoApps.filter { it.lastError.isNotBlank() }.forEach { app ->
+            DiagnosticCard("GitHub • ${app.name}", app.lastError, diagnosticHint(app.lastError), EdgeDanger)
+        }
         if (failed.isNotEmpty()) {
             SectionTitle("Jobs فاشلة", "بعد 10 محاولات")
-            failed.forEach { job ->
-                DiagnosticCard("Update ${job.updateId}", job.error, diagnosticHint(job.error), EdgeDanger)
-            }
+            failed.forEach { f -> DiagnosticCard("Update ${f.updateId}", f.error, diagnosticHint(f.error), EdgeDanger) }
         }
-
         SectionTitle("الأخطاء الأخيرة", "تحليل تلقائي للنمط المحتمل")
-        if (errors.isEmpty()) {
-            EmptyState("لا توجد أخطاء مسجلة")
-        } else {
-            errors.forEach { entry ->
-                DiagnosticCard(entry.level, entry.message, diagnosticHint(entry.message), if (entry.level == "WARN") EdgeWarning else EdgeDanger)
-            }
+        if (errors.isEmpty()) EmptyState("لا توجد أخطاء مسجلة") else errors.forEach { e ->
+            DiagnosticCard(e.level, e.message, diagnosticHint(e.message), if (e.level == "WARN") EdgeWarning else EdgeDanger)
         }
-        TextButton(onClick = {
-            database.clearLogs()
-            onChanged()
-        }) { Text("مسح السجلات المحلية", color = EdgeMuted) }
+        TextButton(onClick = { database.clearLogs(); onChanged() }) { Text("مسح السجلات المحلية", color = EdgeMuted) }
     }
 }
 
-private fun copyDiagnostics(context: Context, metrics: DeviceMetrics, queue: QueueStats, errors: List<LogEntry>) {
+private fun copyDiagnostics(
+    context: Context,
+    metrics: DeviceMetrics,
+    queue: QueueStats,
+    errors: List<LogEntry>,
+    repoApps: List<RepoAppConfig>,
+    plugins: List<PluginConfig>
+): () -> Unit = {
     val report = buildString {
-        appendLine("Moataz Edge $EDGE_VERSION")
+        appendLine("Moataz Edge ${BuildConfig.VERSION_NAME}")
         appendLine("Status=${NodeRuntime.status}")
         appendLine("Bot=@${NodeRuntime.botUsername ?: "none"}")
         appendLine("Routes=${NodeRuntime.activeRoutes}")
@@ -492,37 +498,44 @@ private fun copyDiagnostics(context: Context, metrics: DeviceMetrics, queue: Que
         appendLine("Reconnects=${NodeRuntime.reconnects}")
         appendLine("CPU=${metrics.appCpuPercent}% RAM=${metrics.appRamMb}MB Battery=${metrics.batteryPercent}% Thermal=${metrics.thermal} Network=${metrics.network}")
         appendLine("Queue pending=${queue.pending} failed=${queue.failed} done=${queue.done}")
+        appendLine("RepoApps=${repoApps.size} enabled=${repoApps.count { it.enabled }}")
+        repoApps.forEach { appendLine("Repo ${it.name}: version=${it.versionHash} error=${it.lastError}") }
+        appendLine("Plugins=${plugins.size} enabled=${plugins.count { it.enabled }}")
         errors.take(8).forEach { appendLine("${it.level}: ${it.message}") }
     }
-    val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-    clipboard.setPrimaryClip(ClipData.newPlainText("Moataz Edge diagnostics", report))
+    val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+    cm.setPrimaryClip(ClipData.newPlainText("Moataz Edge diagnostics", report))
 }
 
 @Composable
 private fun DiagnosticCard(title: String, message: String, hint: String, color: Color) {
     Card(
-        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = 0.08f)),
-        border = BorderStroke(1.dp, color.copy(alpha = 0.25f)),
+        colors = CardDefaults.cardColors(containerColor = color.copy(alpha = .08f)),
+        border = BorderStroke(1.dp, color.copy(alpha = .25f)),
         modifier = Modifier.fillMaxWidth()
     ) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(title, color = color, fontWeight = FontWeight.SemiBold)
             Text(message, style = MaterialTheme.typography.bodySmall)
-            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = 0.4f))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outline.copy(alpha = .4f))
             Text(hint, color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }
 
 private fun diagnosticHint(message: String): String {
-    val normalized = message.lowercase()
+    val m = message.lowercase()
     return when {
-        "401" in normalized || "unauthorized" in normalized -> "تحقق من Bot Token؛ Telegram رفض بيانات المصادقة."
-        "403" in normalized || "forbidden" in normalized -> "تحقق من صلاحيات البوت داخل المجموعة أو القناة ومن إمكانية الإرسال."
-        "timeout" in normalized || "timed out" in normalized -> "مهلة شبكة؛ افحص Wi‑Fi/البيانات واستثناءات توفير البطارية."
-        "chat not found" in normalized -> "معرّف الوجهة غير صحيح أو أن البوت ليس عضوًا فيها."
-        "python" in normalized || "module" in normalized -> "Worker Python لم يعمل؛ افحص اسم Worker والمكتبات المضمّنة."
-        else -> "راجع المسار المرتبط بهذا الحدث، ثم اختبر الاتصال والصلاحيات قبل إعادة Job."
+        "401" in m || "unauthorized" in m -> "تحقق من Token؛ الجهة الخارجية رفضت بيانات المصادقة."
+        "403" in m || "forbidden" in m -> "تحقق من صلاحيات Telegram/GitHub/Plugin ومن إمكانية الوصول."
+        "404" in m && "github" in m -> "المستودع أو الـref غير موجود، أو GitHub Token لا يملك صلاحية للمستودع الخاص."
+        "unsupported requirements" in m -> "المستودع يطلب حزمًا غير موجودة في Runtime. استخدم الحزم المضمنة أو ضع حزم Pure-Python داخل vendor/."
+        "entry point" in m -> "تحقق من مسار ملف Python في إعدادات GitHub App، مثل edge_entry.py."
+        "handler" in m -> "تأكد أن الدالة المحددة موجودة وقابلة للاستدعاء، مثل process_update(raw_update, config_json)."
+        "timeout" in m || "timed out" in m -> "مهلة شبكة؛ افحص Wi‑Fi/البيانات واستثناءات توفير البطارية والـendpoint."
+        "chat not found" in m -> "معرّف وجهة Telegram غير صحيح أو أن البوت ليس عضوًا فيها."
+        "python" in m || "module" in m -> "تعذر تشغيل Python Worker؛ افحص Entry point وimports والحزم المتاحة."
+        else -> "راجع Route والتطبيق/Plugin المرتبط بهذا الحدث، ثم اختبر الاتصال والصلاحيات وأعد المحاولة."
     }
 }
 
@@ -532,7 +545,6 @@ private fun SettingsScreen(config: ConfigStore, currentName: String, onSaved: ()
     var token by rememberSaveable { mutableStateOf("") }
     var autoStart by remember { mutableStateOf(config.autoStart()) }
     var saved by remember { mutableStateOf(false) }
-
     Column(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -543,7 +555,7 @@ private fun SettingsScreen(config: ConfigStore, currentName: String, onSaved: ()
             token,
             { token = it },
             Modifier.fillMaxWidth(),
-            label = { Text(if (config.hasBotToken()) "Bot Token محفوظ — اتركه فارغًا للإبقاء عليه" else "Bot Token") },
+            label = { Text(if (config.hasBotToken()) "Bot Token محفوظ — اتركه فارغًا للإبقاء عليه" else "Telegram Bot Token") },
             visualTransformation = PasswordVisualTransformation(),
             singleLine = true
         )
@@ -551,7 +563,7 @@ private fun SettingsScreen(config: ConfigStore, currentName: String, onSaved: ()
             Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
                 Column(Modifier.weight(1f)) {
                     Text("تشغيل بعد إعادة الهاتف", fontWeight = FontWeight.SemiBold)
-                    Text("يحاول تشغيل العقدة تلقائيًا عند BOOT_COMPLETED", color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
+                    Text("يشغل العقدة ويستعيد Routes وGitHub Apps تلقائيًا عند BOOT_COMPLETED", color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
                 }
                 Switch(checked = autoStart, onCheckedChange = { autoStart = it })
             }
@@ -560,10 +572,7 @@ private fun SettingsScreen(config: ConfigStore, currentName: String, onSaved: ()
             onClick = {
                 config.setNodeName(name)
                 config.setAutoStart(autoStart)
-                if (token.isNotBlank()) {
-                    config.saveBotToken(token)
-                    token = ""
-                }
+                if (token.isNotBlank()) { config.saveBotToken(token); token = "" }
                 saved = true
                 onSaved()
             },
@@ -571,12 +580,9 @@ private fun SettingsScreen(config: ConfigStore, currentName: String, onSaved: ()
         ) { Text("حفظ الإعدادات") }
         if (saved) Text("تم حفظ الإعدادات محليًا", color = EdgeMint)
         HorizontalDivider()
-        Text("الإصدار $EDGE_VERSION • ARM64 • Android 8+", color = EdgeMuted)
-        Text(
-            "هذا Release تطويري موقّع بمفتاح Debug لتسهيل الاختبار. قبل توزيع عام سننقله إلى مفتاح توقيع خاص ثابت.",
-            color = EdgeWarning,
-            style = MaterialTheme.typography.bodySmall
-        )
+        Text("الإصدار ${BuildConfig.VERSION_NAME} • ARM64 • Android 8+", color = EdgeMuted)
+        Text("GitHub Apps تعمل بنمط Managed Handler. المستودعات غير الموثوقة لا يجب تشغيلها لأن كود Python يعمل داخل Runtime التطبيق.", color = EdgeWarning, style = MaterialTheme.typography.bodySmall)
+        Text("هذا Release تطويري موقّع بمفتاح Debug. قبل التوزيع العام يجب استخدام Release Keystore ثابت عبر CI secrets.", color = EdgeWarning, style = MaterialTheme.typography.bodySmall)
     }
 }
 
@@ -592,22 +598,19 @@ private fun SectionTitle(title: String, subtitle: String) {
 private fun CompactLog(entry: LogEntry) {
     Card(colors = CardDefaults.cardColors(containerColor = EdgeSurface), modifier = Modifier.fillMaxWidth()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            val levelColor = when (entry.level) {
+            val color = when (entry.level) {
                 "ERROR", "PYTHON_ERROR" -> EdgeDanger
                 "WARN" -> EdgeWarning
+                "REPO", "PLUGIN" -> EdgeGold
                 else -> EdgeMint
             }
-            Box(Modifier.size(8.dp).clip(CircleShape).background(levelColor))
+            Box(Modifier.size(8.dp).clip(CircleShape).background(color))
             Spacer(Modifier.width(9.dp))
             Column(Modifier.weight(1f)) {
                 Text(entry.level, style = MaterialTheme.typography.bodySmall, color = EdgeMuted)
                 Text(entry.message, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
-            Text(
-                DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(entry.createdAt)),
-                color = EdgeMuted,
-                style = MaterialTheme.typography.bodySmall
-            )
+            Text(DateFormat.getTimeInstance(DateFormat.SHORT).format(Date(entry.createdAt)), color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
         }
     }
 }

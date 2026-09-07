@@ -12,8 +12,8 @@ android {
         applicationId = "com.moataz.edge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
-        versionName = "0.2.0"
+        versionCode = 3
+        versionName = "0.3.0"
 
         // Personal edge-node build: 64-bit ARM phones only.
         ndk {
@@ -49,7 +49,7 @@ chaquopy {
     defaultConfig {
         version = "3.13"
         pip {
-            // Bundled offline runtime pack: no pip/install step is needed on the phone.
+            // Bundled offline runtime pack: GitHub repository apps may use these without pip on the phone.
             install("requests==2.32.5")
             install("beautifulsoup4==4.13.5")
             install("python-dateutil==2.9.0.post0")
