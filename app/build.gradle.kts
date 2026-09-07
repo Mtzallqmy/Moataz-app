@@ -12,10 +12,9 @@ android {
         applicationId = "com.moataz.edge"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
-        versionName = "0.3.0"
+        versionCode = 4
+        versionName = "0.4.0"
 
-        // Personal edge-node build: 64-bit ARM phones only.
         ndk {
             abiFilters += listOf("arm64-v8a")
         }
@@ -28,7 +27,7 @@ android {
 
     buildTypes {
         getByName("release") {
-            // Installable development release. Replace with a private release key before public distribution.
+            // Installable development release. Configure a private release keystore before public distribution.
             signingConfig = signingConfigs.getByName("debug")
             isMinifyEnabled = false
             isShrinkResources = false
@@ -47,12 +46,23 @@ android {
 
 chaquopy {
     defaultConfig {
-        version = "3.13"
+        // Python 3.12 is the compatibility baseline for hosted bot repositories.
+        version = "3.12"
         pip {
-            // Bundled offline runtime pack: GitHub repository apps may use these without pip on the phone.
+            // Core network / parsing pack.
             install("requests==2.32.5")
             install("beautifulsoup4==4.13.5")
             install("python-dateutil==2.9.0.post0")
+
+            // Local PaaS bot runtime pack. Everything is built into the APK: no pip on the phone.
+            install("aiogram==3.31.0")
+            install("aiohttp>=3.12,<4")
+            install("SQLAlchemy==2.0.52")
+            install("aiosqlite>=0.21,<1")
+            install("pydantic-settings>=2.10,<3")
+            install("yt-dlp>=2026.8.19")
+            install("jinja2>=3.1,<4")
+            install("python-multipart>=0.0.20,<1")
         }
     }
 }
