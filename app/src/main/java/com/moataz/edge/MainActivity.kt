@@ -12,6 +12,8 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import com.moataz.edge.data.ConfigStore
 import com.moataz.edge.data.NodeDatabase
+import com.moataz.edge.data.PluginStore
+import com.moataz.edge.data.RepoAppStore
 import com.moataz.edge.data.RouteStore
 import com.moataz.edge.runtime.TelegramNodeService
 import com.moataz.edge.ui.EdgeApp
@@ -21,12 +23,16 @@ class MainActivity : ComponentActivity() {
     private lateinit var config: ConfigStore
     private lateinit var database: NodeDatabase
     private lateinit var routes: RouteStore
+    private lateinit var repoApps: RepoAppStore
+    private lateinit var plugins: PluginStore
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         config = ConfigStore(this)
         database = NodeDatabase(this)
         routes = RouteStore(this, config)
+        repoApps = RepoAppStore(this)
+        plugins = PluginStore(this)
         requestNotificationPermissionIfNeeded()
         enableEdgeToEdge()
 
@@ -36,6 +42,8 @@ class MainActivity : ComponentActivity() {
                     config = config,
                     database = database,
                     routeStore = routes,
+                    repoAppStore = repoApps,
+                    pluginStore = plugins,
                     onStart = ::startNode,
                     onStop = ::stopNode,
                     onRestart = ::restartNode
