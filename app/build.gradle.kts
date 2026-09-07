@@ -51,7 +51,6 @@ chaquopy {
             // Bundled offline runtime pack: no pip/install step is needed on the phone.
             install("requests==2.32.5")
             install("beautifulsoup4==4.13.5")
-            install("feedparser==6.0.12")
             install("python-dateutil==2.9.0.post0")
         }
     }
