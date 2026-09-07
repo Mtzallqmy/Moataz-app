@@ -13,7 +13,7 @@ object WorkerCatalog {
     val runtimeLibraries = listOf(
         RuntimeLibrary("Python", "3.12", "Managed async runtime + stdlib + SQLite"),
         RuntimeLibrary("aiogram", "3.31.0", "Telegram bot framework"),
-        RuntimeLibrary("aiohttp", "3.12+", "Async HTTP / Telegram transport"),
+        RuntimeLibrary("aiohttp", "3.10.10", "Android ARM64 async HTTP transport"),
         RuntimeLibrary("SQLAlchemy", "2.0.52", "ORM + local SQLite apps"),
         RuntimeLibrary("aiosqlite", "0.21+", "Async SQLite database"),
         RuntimeLibrary("yt-dlp", "2026.8+", "Media extraction/download engine"),
