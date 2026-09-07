@@ -48,17 +48,24 @@ chaquopy {
     defaultConfig {
         version = "3.12"
         pip {
+            // Flet's mobile wheel index contains Android-tagged binary wheels for packages
+            // such as pydantic-core. Dependencies are resolved only while building the APK;
+            // nothing is installed from the network on the phone.
+            options("--extra-index-url", "https://pypi.flet.dev")
+
             install("requests==2.32.5")
             install("beautifulsoup4==4.13.5")
             install("python-dateutil==2.9.0.post0")
 
-            // Android ARM64 compatibility profile. aiogram 3.17 supports the aiohttp <3.12 line,
-            // while current Chaquopy wheels for Python 3.12 provide aiohttp 3.10.10.
+            // Full Telegram service profile for Android 8+ / ARM64.
+            // pydantic 2.11.7 pins pydantic-core 2.33.2, which has an android_24_arm64_v8a wheel.
             install("aiohttp==3.10.10")
-            install("aiogram==3.17.0")
+            install("pydantic==2.11.7")
+            install("pydantic-core==2.33.2")
+            install("pydantic-settings==2.10.1")
+            install("aiogram==3.20.0.post0")
             install("SQLAlchemy==2.0.52")
             install("aiosqlite>=0.21,<1")
-            install("pydantic-settings>=2.10,<3")
             install("yt-dlp>=2026.8.19")
             install("jinja2>=3.1,<4")
             install("python-multipart>=0.0.20,<1")
