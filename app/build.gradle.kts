@@ -54,9 +54,11 @@ chaquopy {
             install("beautifulsoup4==4.13.5")
             install("python-dateutil==2.9.0.post0")
 
-            // Local PaaS bot runtime pack. Everything is built into the APK: no pip on the phone.
+            // Local PaaS bot runtime pack. All dependencies are resolved at APK build time.
+            // Chaquopy's Android repository currently provides aiohttp 3.10.10 for Python 3.12/ARM64,
+            // so the runtime is pinned to the newest Android wheel which is actually buildable.
+            install("aiohttp==3.10.10")
             install("aiogram==3.31.0")
-            install("aiohttp>=3.12,<4")
             install("SQLAlchemy==2.0.52")
             install("aiosqlite>=0.21,<1")
             install("pydantic-settings>=2.10,<3")
