@@ -46,19 +46,16 @@ android {
 
 chaquopy {
     defaultConfig {
-        // Python 3.12 is the compatibility baseline for hosted bot repositories.
         version = "3.12"
         pip {
-            // Core network / parsing pack.
             install("requests==2.32.5")
             install("beautifulsoup4==4.13.5")
             install("python-dateutil==2.9.0.post0")
 
-            // Local PaaS bot runtime pack. All dependencies are resolved at APK build time.
-            // Chaquopy's Android repository currently provides aiohttp 3.10.10 for Python 3.12/ARM64,
-            // so the runtime is pinned to the newest Android wheel which is actually buildable.
+            // Android ARM64 compatibility profile. aiogram 3.17 supports the aiohttp <3.12 line,
+            // while current Chaquopy wheels for Python 3.12 provide aiohttp 3.10.10.
             install("aiohttp==3.10.10")
-            install("aiogram==3.31.0")
+            install("aiogram==3.17.0")
             install("SQLAlchemy==2.0.52")
             install("aiosqlite>=0.21,<1")
             install("pydantic-settings>=2.10,<3")
