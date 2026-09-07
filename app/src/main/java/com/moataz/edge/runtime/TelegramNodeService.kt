@@ -47,7 +47,7 @@ class TelegramNodeService : Service() {
         plugins = PluginStore(this)
         repoApps = RepoAppStore(this)
         pythonWorker = PythonWorker()
-        repoWorker = RepoPythonWorker(repoApps)
+        repoWorker = RepoPythonWorker(repoApps, config)
         repoManager = GitHubRepoManager(this, config, repoApps)
         pluginDispatcher = PluginDispatcher(plugins, database)
         createNotificationChannel()
@@ -78,6 +78,7 @@ class TelegramNodeService : Service() {
         if (token.isNullOrBlank()) { fail("لا يوجد Bot Token محفوظ"); return }
 
         syncAutoRepoApps()
+        prewarmRepoApps()
 
         val api = TelegramBotApi(token)
         var offset = config.telegramOffset()
@@ -135,6 +136,17 @@ class TelegramNodeService : Service() {
                     database.log("WARN", "Repo sync ${app.name}: ${error.message}")
                 }
             }
+    }
+
+    private fun prewarmRepoApps() {
+        repoApps.all().filter { it.enabled && repoApps.isInstalled(it.id) }.forEach { app ->
+            if (!running.get()) return
+            val health = repoWorker.health(app)
+            val ok = health.optBoolean("ok", false)
+            val detail = health.optString("detail", if (ok) "ready" else "health failed")
+            database.log(if (ok) "REPO" else "ERROR", "${app.name} health: $detail")
+            if (!ok) repoApps.recordError(app.id, detail)
+        }
     }
 
     private fun processPendingQueue(api: TelegramBotApi) {
@@ -242,7 +254,7 @@ class TelegramNodeService : Service() {
         val builder = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) Notification.Builder(this, CHANNEL_ID) else Notification.Builder(this)
         return builder
             .setContentTitle("Moataz Edge • ${config.nodeName()}")
-            .setContentText("Telegram + GitHub Apps + Plugins تعمل محليًا")
+            .setContentText("Local PaaS + Telegram + GitHub Apps تعمل على الهاتف")
             .setSmallIcon(com.moataz.edge.R.drawable.ic_edge_mark)
             .setOngoing(true)
             .setContentIntent(openApp)
