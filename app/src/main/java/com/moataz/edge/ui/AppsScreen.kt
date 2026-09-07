@@ -1,6 +1,7 @@
 package com.moataz.edge.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -11,6 +12,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.weight
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -42,7 +44,6 @@ import androidx.compose.ui.unit.dp
 import com.moataz.edge.data.ConfigStore
 import com.moataz.edge.data.PluginConfig
 import com.moataz.edge.data.PluginStore
-import com.moataz.edge.data.PluginType
 import com.moataz.edge.data.RepoAppConfig
 import com.moataz.edge.data.RepoAppStore
 import com.moataz.edge.repo.GitHubRepoManager
@@ -94,19 +95,19 @@ internal fun AppsScreen(
             Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
                 Text("تشغيل مستودعات GitHub بشكل مُدار", color = EdgeGold, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "التطبيق لا ينفذ shell/npm/gradle ولا يمنح المستودع صلاحية تثبيت حزم عشوائية. يتم تنزيل نسخة ZIP آمنة، فحصها، حفظ نسخة سابقة للـRollback، ثم تشغيل Python entry point داخل Runtime المضمن.",
+                    "يتم تنزيل ZIP من GitHub، فحص المسارات والحجم والـrequirements، حفظ نسخة سابقة للـRollback، ثم تشغيل Python entry point داخل Runtime المضمن. لا يتم تنفيذ shell/npm/gradle أو pip عشوائي على الهاتف.",
                     color = EdgeMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "استخدم فقط مستودعات تثق بها. عقد التشغيل: def process_update(raw_update, config_json) ويعيد dict أو نصًا.",
+                    "العقد: def process_update(raw_update, config_json) ويعيد dict أو str أو None. استخدم مستودعات موثوقة فقط.",
                     color = EdgeMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         }
 
-        AppsSectionTitle("GitHub Access", "اختياري للمستودعات العامة، ومطلوب للمستودعات الخاصة")
+        AppsSectionTitle("GitHub Access", "اختياري للمستودعات العامة ومطلوب للمستودعات الخاصة")
         OutlinedTextField(
             value = githubToken,
             onValueChange = { githubToken = it },
@@ -118,16 +119,16 @@ internal fun AppsScreen(
         Button(
             onClick = {
                 runCatching {
-                    if (githubToken.isNotBlank()) config.saveGithubToken(githubToken)
+                    config.saveGithubToken(githubToken)
                     githubToken = ""
-                    message = "تم حفظ بيانات GitHub داخل Android Keystore"
+                    message = "تم حفظ GitHub Token داخل Android Keystore"
                 }.onFailure { message = it.message.orEmpty() }
             },
             enabled = githubToken.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("حفظ GitHub Token") }
 
-        AppsSectionTitle("إضافة مشروع GitHub", "حوّل مستودع Python إلى Worker/Bot داخل الهاتف")
+        AppsSectionTitle("إضافة مشروع GitHub", "حوّل مستودع Python إلى Worker/Bot على الهاتف")
         OutlinedTextField(repoName, { repoName = it }, Modifier.fillMaxWidth(), label = { Text("اسم التطبيق") }, singleLine = true)
         OutlinedTextField(repoUrl, { repoUrl = it }, Modifier.fillMaxWidth(), label = { Text("https://github.com/owner/repo") }, singleLine = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -139,7 +140,11 @@ internal fun AppsScreen(
             onClick = {
                 runCatching {
                     val app = repoStore.add(repoName, repoUrl, repoRef, entryPoint, handler)
-                    repoName = ""; repoUrl = ""; repoRef = "main"; entryPoint = "edge_entry.py"; handler = "process_update"
+                    repoName = ""
+                    repoUrl = ""
+                    repoRef = "main"
+                    entryPoint = "edge_entry.py"
+                    handler = "process_update"
                     message = "تمت إضافة ${app.name}. اضغط مزامنة لتنزيله وفحصه."
                     onChanged()
                 }.onFailure { message = it.message.orEmpty() }
@@ -148,44 +153,42 @@ internal fun AppsScreen(
             modifier = Modifier.fillMaxWidth()
         ) { Text("إضافة المستودع") }
 
-        if (repoApps.isEmpty()) {
-            AppsEmpty("لا توجد تطبيقات GitHub بعد")
-        } else {
-            repoApps.forEach { app ->
-                RepoAppCard(
-                    app = app,
-                    installed = repoStore.isInstalled(app.id),
-                    compatibility = manager.compatibility(app),
-                    busy = busyRepo == app.id,
-                    onToggle = { repoStore.setEnabled(app.id, it); onChanged() },
-                    onSync = {
-                        busyRepo = app.id
-                        message = "تتم مزامنة ${app.name}…"
-                        scope.launch {
-                            val result = runCatching { withContext(Dispatchers.IO) { manager.sync(app) } }
-                            result.onSuccess {
-                                message = "${app.name}: تم تفعيل ${it.versionHash} • ${it.files} ملف"
-                            }.onFailure { message = "${app.name}: ${it.message}" }
-                            busyRepo = null
-                            onChanged()
-                        }
-                    },
-                    onRollback = {
-                        busyRepo = app.id
-                        scope.launch {
-                            val ok = withContext(Dispatchers.IO) { manager.rollback(app) }
-                            message = if (ok) "${app.name}: تم الرجوع للنسخة السابقة" else "${app.name}: لا توجد نسخة سابقة"
-                            busyRepo = null
-                            onChanged()
-                        }
-                    },
-                    onDelete = { repoStore.delete(app.id); onChanged() }
-                )
-            }
+        if (repoApps.isEmpty()) AppsEmpty("لا توجد تطبيقات GitHub بعد")
+        repoApps.forEach { app ->
+            RepoAppCard(
+                app = app,
+                installed = repoStore.isInstalled(app.id),
+                compatibility = manager.compatibility(app),
+                busy = busyRepo == app.id,
+                onToggle = { repoStore.setEnabled(app.id, it); onChanged() },
+                onSync = {
+                    busyRepo = app.id
+                    message = "تتم مزامنة ${app.name}…"
+                    scope.launch {
+                        val result = runCatching { withContext(Dispatchers.IO) { manager.sync(app) } }
+                        message = result.fold(
+                            onSuccess = { "${app.name}: تم تفعيل ${it.versionHash} • ${it.files} ملف" },
+                            onFailure = { "${app.name}: ${it.message}" }
+                        )
+                        busyRepo = null
+                        onChanged()
+                    }
+                },
+                onRollback = {
+                    busyRepo = app.id
+                    scope.launch {
+                        val ok = withContext(Dispatchers.IO) { manager.rollback(app) }
+                        message = if (ok) "${app.name}: تم الرجوع للنسخة السابقة" else "${app.name}: لا توجد نسخة سابقة"
+                        busyRepo = null
+                        onChanged()
+                    }
+                },
+                onDelete = { repoStore.delete(app.id); onChanged() }
+            )
         }
 
         HorizontalDivider()
-        AppsSectionTitle("Connector Plugins", "اربط Route بوجهة HTTP أو سجل محلي بجانب Telegram")
+        AppsSectionTitle("Connector Plugins", "Telegram مدمج، ويمكن إضافة HTTP JSON أو Local Log كوجهة Route")
         BuiltInPluginCard("Telegram", "Source + Destination", if (config.hasBotToken()) "مهيأ" else "يحتاج Bot Token", config.hasBotToken())
         BuiltInPluginCard("GitHub Repo Runtime", "Processor", "Managed Python 3.13", true)
         BuiltInPluginCard("Python Runtime Pack", "Processor", "${WorkerCatalog.workers.size} Workers مدمجة", true)
@@ -198,7 +201,7 @@ internal fun AppsScreen(
             )
         }
 
-        AppsSectionTitle("إضافة HTTP JSON Plugin", "يرسل POST آمنًا إلى HTTPS endpoint عند وصول Route للوجهة")
+        AppsSectionTitle("إضافة HTTP JSON Plugin", "POST إلى HTTPS endpoint مع Bearer Token مشفر اختياريًا")
         OutlinedTextField(pluginName, { pluginName = it }, Modifier.fillMaxWidth(), label = { Text("اسم الـPlugin") }, singleLine = true)
         OutlinedTextField(pluginUrl, { pluginUrl = it }, Modifier.fillMaxWidth(), label = { Text("HTTPS endpoint") }, singleLine = true)
         OutlinedTextField(
@@ -213,8 +216,10 @@ internal fun AppsScreen(
             onClick = {
                 runCatching {
                     val plugin = pluginStore.addHttp(pluginName, pluginUrl, pluginToken)
-                    pluginName = ""; pluginUrl = ""; pluginToken = ""
-                    message = "تم إنشاء ${plugin.name}. استخدم ${plugin.destinationToken} كوجهة Route."
+                    pluginName = ""
+                    pluginUrl = ""
+                    pluginToken = ""
+                    message = "تم إنشاء ${plugin.name}. وجهة Route: ${plugin.destinationToken}"
                     onChanged()
                 }.onFailure { message = it.message.orEmpty() }
             },
@@ -224,7 +229,7 @@ internal fun AppsScreen(
         OutlinedButton(
             onClick = {
                 val plugin = pluginStore.addLocalLog("Local Log")
-                message = "تم إنشاء ${plugin.name}. وجهته ${plugin.destinationToken}"
+                message = "تم إنشاء ${plugin.name}. وجهة Route: ${plugin.destinationToken}"
                 onChanged()
             },
             modifier = Modifier.fillMaxWidth()
@@ -296,7 +301,8 @@ private fun PluginCard(plugin: PluginConfig, onToggle: (Boolean) -> Unit, onDele
     Card(colors = CardDefaults.cardColors(containerColor = EdgeSurface), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Box(Modifier.size(9.dp).clip(CircleShape).then(Modifier))
+                Box(Modifier.size(9.dp).clip(CircleShape).background(if (plugin.enabled) EdgeMint else EdgeMuted))
+                Spacer(Modifier.width(10.dp))
                 Column(Modifier.weight(1f)) {
                     Text(plugin.name, fontWeight = FontWeight.SemiBold)
                     Text(plugin.type.name, color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
