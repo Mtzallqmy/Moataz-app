@@ -4,7 +4,6 @@ on:
   push:
     branches: [ main ]
   pull_request:
-  workflow_dispatch:
 
 jobs:
   build:
@@ -34,12 +33,12 @@ jobs:
         with:
           gradle-version: "9.4.1"
 
-      - name: Build debug APK
-        run: gradle :app:assembleDebug --stacktrace
+      - name: Build ARM64 release APK
+        run: gradle :app:assembleRelease --stacktrace
 
-      - name: Upload debug APK
+      - name: Upload ARM64 release APK
         uses: actions/upload-artifact@v4
         with:
-          name: moataz-edge-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: moataz-edge-v0.2-arm64-release
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error

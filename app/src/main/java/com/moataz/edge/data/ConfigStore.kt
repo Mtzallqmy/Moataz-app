@@ -13,7 +13,6 @@ class ConfigStore(context: Context) {
     }
 
     fun botToken(): String? = secretStore.get(KEY_BOT_TOKEN)
-
     fun hasBotToken(): Boolean = secretStore.contains(KEY_BOT_TOKEN)
 
     fun saveRouting(sourceChat: String, destinationChat: String) {
@@ -24,12 +23,23 @@ class ConfigStore(context: Context) {
     }
 
     fun sourceChat(): String = preferences.getString(KEY_SOURCE_CHAT, "").orEmpty()
-
     fun destinationChat(): String = preferences.getString(KEY_DESTINATION_CHAT, "").orEmpty()
+
+    fun nodeName(): String = preferences.getString(KEY_NODE_NAME, "عقدة الهاتف").orEmpty()
+    fun setNodeName(value: String) = preferences.edit().putString(KEY_NODE_NAME, value.trim().ifBlank { "عقدة الهاتف" }).apply()
+
+    fun autoStart(): Boolean = preferences.getBoolean(KEY_AUTO_START, false)
+    fun setAutoStart(value: Boolean) = preferences.edit().putBoolean(KEY_AUTO_START, value).apply()
+
+    fun telegramOffset(): Long = preferences.getLong(KEY_TELEGRAM_OFFSET, 0L)
+    fun saveTelegramOffset(value: Long) = preferences.edit().putLong(KEY_TELEGRAM_OFFSET, value).apply()
 
     private companion object {
         const val KEY_BOT_TOKEN = "telegram_bot_token"
         const val KEY_SOURCE_CHAT = "source_chat"
         const val KEY_DESTINATION_CHAT = "destination_chat"
+        const val KEY_NODE_NAME = "node_name"
+        const val KEY_AUTO_START = "auto_start"
+        const val KEY_TELEGRAM_OFFSET = "telegram_offset"
     }
 }

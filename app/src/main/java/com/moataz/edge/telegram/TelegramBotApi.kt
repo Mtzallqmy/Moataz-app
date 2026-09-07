@@ -2,7 +2,6 @@ package com.moataz.edge.telegram
 
 import org.json.JSONObject
 import java.io.IOException
-import java.net.HttpURLConnection
 import java.net.URL
 import java.net.URLEncoder
 import java.nio.charset.StandardCharsets
@@ -21,8 +20,7 @@ class TelegramBotApi(private val token: String) {
     private val baseUrl = "https://api.telegram.org/bot$token"
 
     fun getMe(): String? {
-        val response = request("GET", "$baseUrl/getMe")
-        val root = checked(response)
+        val root = checked(request("GET", "$baseUrl/getMe"))
         return root.optJSONObject("result")?.optString("username")?.takeIf { it.isNotBlank() }
     }
 
@@ -31,69 +29,46 @@ class TelegramBotApi(private val token: String) {
         val root = checked(request("GET", url, readTimeoutMs = (timeoutSeconds + 10) * 1000))
         val result = root.getJSONArray("result")
         return buildList {
-            for (index in 0 until result.length()) {
-                val rawObject = result.getJSONObject(index)
-                parseUpdate(rawObject.toString())?.let(::add)
-            }
+            for (index in 0 until result.length()) parseUpdate(result.getJSONObject(index).toString())?.let(::add)
         }
     }
 
     fun copyMessage(destinationChat: String, sourceChat: String, messageId: Int) {
-        val body = formEncode(
-            mapOf(
-                "chat_id" to destinationChat,
-                "from_chat_id" to sourceChat,
-                "message_id" to messageId.toString()
-            )
-        )
+        val body = formEncode(mapOf("chat_id" to destinationChat, "from_chat_id" to sourceChat, "message_id" to messageId.toString()))
         checked(request("POST", "$baseUrl/copyMessage", body))
+    }
+
+    fun sendMessage(destinationChat: String, text: String) {
+        val body = formEncode(mapOf("chat_id" to destinationChat, "text" to text.take(4096)))
+        checked(request("POST", "$baseUrl/sendMessage", body))
     }
 
     private fun checked(response: String): JSONObject {
         val root = JSONObject(response)
-        if (!root.optBoolean("ok", false)) {
-            throw IOException(root.optString("description", "Telegram API request failed"))
-        }
+        if (!root.optBoolean("ok", false)) throw IOException(root.optString("description", "Telegram API request failed"))
         return root
     }
 
-    private fun request(
-        method: String,
-        url: String,
-        body: String? = null,
-        readTimeoutMs: Int = 35_000
-    ): String {
+    private fun request(method: String, url: String, body: String? = null, readTimeoutMs: Int = 35_000): String {
         val connection = (URL(url).openConnection() as HttpsURLConnection).apply {
-            requestMethod = method
-            connectTimeout = 15_000
-            readTimeout = readTimeoutMs
+            requestMethod = method; connectTimeout = 15_000; readTimeout = readTimeoutMs
             setRequestProperty("Accept", "application/json")
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/x-www-form-urlencoded; charset=UTF-8")
             }
         }
-
         try {
-            if (body != null) {
-                connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
-            }
+            if (body != null) connection.outputStream.use { it.write(body.toByteArray(StandardCharsets.UTF_8)) }
             val status = connection.responseCode
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val response = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
-            if (status !in 200..299) {
-                throw IOException("HTTP $status: ${response.take(500)}")
-            }
+            if (status !in 200..299) throw IOException("HTTP $status: ${response.take(500)}")
             return response
-        } finally {
-            connection.disconnect()
-        }
+        } finally { connection.disconnect() }
     }
 
-    private fun formEncode(values: Map<String, String>): String = values.entries.joinToString("&") { (key, value) ->
-        "${encode(key)}=${encode(value)}"
-    }
-
+    private fun formEncode(values: Map<String, String>): String = values.entries.joinToString("&") { (key, value) -> "${encode(key)}=${encode(value)}" }
     private fun encode(value: String): String = URLEncoder.encode(value, StandardCharsets.UTF_8.name())
 
     companion object {
@@ -110,9 +85,7 @@ class TelegramBotApi(private val token: String) {
                 chatId = chat.getLong("id").toString(),
                 chatUsername = chat.optString("username").takeIf { it.isNotBlank() },
                 messageId = message.getInt("message_id"),
-                text = message.optString("text").ifBlank {
-                    message.optString("caption").takeIf { it.isNotBlank() }.orEmpty()
-                }.takeIf { it.isNotBlank() },
+                text = message.optString("text").ifBlank { message.optString("caption").takeIf { it.isNotBlank() }.orEmpty() }.takeIf { it.isNotBlank() },
                 raw = update.toString()
             )
         }.getOrNull()
