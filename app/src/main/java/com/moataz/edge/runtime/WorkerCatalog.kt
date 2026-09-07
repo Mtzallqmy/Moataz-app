@@ -13,8 +13,7 @@ object WorkerCatalog {
     val runtimeLibraries = listOf(
         RuntimeLibrary("requests", "2.32.5", "HTTP client"),
         RuntimeLibrary("BeautifulSoup", "4.13.5", "HTML parsing"),
-        RuntimeLibrary("feedparser", "6.0.12", "RSS/Atom"),
         RuntimeLibrary("python-dateutil", "2.9.0", "Date/time parsing"),
-        RuntimeLibrary("Python stdlib", "3.13", "JSON, SQLite, asyncio, regex, pathlib وغيرها")
+        RuntimeLibrary("Python stdlib", "3.13", "JSON, SQLite, asyncio, XML/RSS, regex, pathlib وغيرها")
     )
 }
