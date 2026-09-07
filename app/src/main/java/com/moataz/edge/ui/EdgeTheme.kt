@@ -40,15 +40,15 @@ private val EdgeScheme = darkColorScheme(
 )
 
 private val ArabicFirstTypography = Typography(
-    displaySmall = TextStyle(FontFamily.SansSerif, FontWeight.Bold, fontSize = 34.sp, lineHeight = 44.sp),
-    headlineMedium = TextStyle(FontFamily.SansSerif, FontWeight.Bold, fontSize = 27.sp, lineHeight = 36.sp),
-    headlineSmall = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 30.sp),
-    titleLarge = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 28.sp),
-    titleMedium = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, fontSize = 17.sp, lineHeight = 25.sp),
-    bodyLarge = TextStyle(FontFamily.SansSerif, FontWeight.Normal, fontSize = 16.sp, lineHeight = 25.sp),
-    bodyMedium = TextStyle(FontFamily.SansSerif, FontWeight.Normal, fontSize = 14.sp, lineHeight = 22.sp),
-    bodySmall = TextStyle(FontFamily.SansSerif, FontWeight.Normal, fontSize = 12.sp, lineHeight = 19.sp),
-    labelLarge = TextStyle(FontFamily.SansSerif, FontWeight.SemiBold, fontSize = 14.sp)
+    displaySmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold, fontSize = 34.sp, lineHeight = 44.sp),
+    headlineMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Bold, fontSize = 27.sp, lineHeight = 36.sp),
+    headlineSmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 22.sp, lineHeight = 30.sp),
+    titleLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 20.sp, lineHeight = 28.sp),
+    titleMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 17.sp, lineHeight = 25.sp),
+    bodyLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal, fontSize = 16.sp, lineHeight = 25.sp),
+    bodyMedium = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal, fontSize = 14.sp, lineHeight = 22.sp),
+    bodySmall = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.Normal, fontSize = 12.sp, lineHeight = 19.sp),
+    labelLarge = TextStyle(fontFamily = FontFamily.SansSerif, fontWeight = FontWeight.SemiBold, fontSize = 14.sp)
 )
 
 private val EdgeShapes = Shapes(
