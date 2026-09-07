@@ -17,9 +17,19 @@ data class RepoAppConfig(
     val autoSync: Boolean,
     val lastSyncedAt: Long,
     val versionHash: String,
-    val lastError: String
+    val lastError: String,
+    val runtime: String = "python-3.12-managed",
+    val mode: String = "function",
+    val compatibilityJson: String = ""
 ) {
     val workerId: String get() = "repo:$id"
+
+    fun compatibilityState(): String {
+        if (compatibilityJson.isBlank()) return if (lastError.isBlank()) "UNKNOWN" else "BLOCKED"
+        return runCatching {
+            if (JSONObject(compatibilityJson).optBoolean("compatible", false)) "READY" else "BLOCKED"
+        }.getOrDefault("UNKNOWN")
+    }
 }
 
 class RepoAppStore(private val context: Context) {
@@ -45,7 +55,10 @@ class RepoAppStore(private val context: Context) {
                             autoSync = item.optBoolean("auto_sync", true),
                             lastSyncedAt = item.optLong("last_synced_at", 0L),
                             versionHash = item.optString("version_hash"),
-                            lastError = item.optString("last_error")
+                            lastError = item.optString("last_error"),
+                            runtime = item.optString("runtime", "python-3.12-managed"),
+                            mode = item.optString("mode", "function"),
+                            compatibilityJson = item.optString("compatibility_json")
                         )
                     )
                 }
@@ -72,7 +85,10 @@ class RepoAppStore(private val context: Context) {
             autoSync = true,
             lastSyncedAt = 0L,
             versionHash = "",
-            lastError = ""
+            lastError = "",
+            runtime = "python-3.12-managed",
+            mode = "function",
+            compatibilityJson = ""
         )
         upsert(app)
         return app
@@ -104,7 +120,22 @@ class RepoAppStore(private val context: Context) {
     }
 
     fun recordError(id: String, message: String) {
-        get(id)?.let { upsert(it.copy(lastError = message.take(500))) }
+        get(id)?.let { upsert(it.copy(lastError = message.take(1000))) }
+    }
+
+    fun recordCompatibility(id: String, json: String) {
+        get(id)?.let { app ->
+            val parsed = runCatching { JSONObject(json) }.getOrNull()
+            upsert(
+                app.copy(
+                    runtime = parsed?.optString("runtime", app.runtime) ?: app.runtime,
+                    mode = parsed?.optString("mode", app.mode) ?: app.mode,
+                    entryPoint = parsed?.optString("entry_point", app.entryPoint) ?: app.entryPoint,
+                    handler = parsed?.optString("handler", app.handler) ?: app.handler,
+                    compatibilityJson = json.take(16_000)
+                )
+            )
+        }
     }
 
     fun delete(id: String) {
@@ -143,6 +174,9 @@ class RepoAppStore(private val context: Context) {
                     .put("last_synced_at", item.lastSyncedAt)
                     .put("version_hash", item.versionHash)
                     .put("last_error", item.lastError)
+                    .put("runtime", item.runtime)
+                    .put("mode", item.mode)
+                    .put("compatibility_json", item.compatibilityJson)
             )
         }
         preferences.edit().putString(KEY_APPS, array.toString()).apply()
