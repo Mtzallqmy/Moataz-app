@@ -15,6 +15,14 @@ class ConfigStore(context: Context) {
     fun botToken(): String? = secretStore.get(KEY_BOT_TOKEN)
     fun hasBotToken(): Boolean = secretStore.contains(KEY_BOT_TOKEN)
 
+    fun saveGithubToken(token: String) {
+        require(token.isNotBlank()) { "GitHub token must not be blank" }
+        secretStore.put(KEY_GITHUB_TOKEN, token.trim())
+    }
+
+    fun githubToken(): String? = secretStore.get(KEY_GITHUB_TOKEN)
+    fun hasGithubToken(): Boolean = secretStore.contains(KEY_GITHUB_TOKEN)
+
     fun saveRouting(sourceChat: String, destinationChat: String) {
         preferences.edit()
             .putString(KEY_SOURCE_CHAT, sourceChat.trim())
@@ -36,6 +44,7 @@ class ConfigStore(context: Context) {
 
     private companion object {
         const val KEY_BOT_TOKEN = "telegram_bot_token"
+        const val KEY_GITHUB_TOKEN = "github_access_token"
         const val KEY_SOURCE_CHAT = "source_chat"
         const val KEY_DESTINATION_CHAT = "destination_chat"
         const val KEY_NODE_NAME = "node_name"
