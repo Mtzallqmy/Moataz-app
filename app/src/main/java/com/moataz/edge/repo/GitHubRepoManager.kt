@@ -237,7 +237,7 @@ class GitHubRepoManager(
         if (requirement in BUNDLED_REQUIREMENTS) return true
         val vendor = File(root, "vendor")
         if (!vendor.isDirectory) return false
-        val names = listOf(requirement, requirement.replace('-', '_'), requirement.replace('-', ""))
+        val names = listOf(requirement, requirement.replace('-', '_'), requirement.replace("-", ""))
         return names.any { File(vendor, it).exists() }
     }
 
