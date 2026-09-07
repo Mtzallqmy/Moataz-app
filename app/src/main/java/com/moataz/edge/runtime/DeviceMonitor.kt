@@ -30,7 +30,7 @@ data class DeviceMetrics(
     val uptimeMinutes: Long
 ) {
     companion object {
-        val EMPTY = DeviceMetrics(0, 0, 0, 0, 0, null, false, "—", "—", 0f, 0)
+        val EMPTY = DeviceMetrics(0, 0, 0, 0, 0, null, false, "—", "—", 0f, 0L)
     }
 }
 
@@ -43,13 +43,14 @@ class DeviceMonitor(private val context: Context) {
         val nowWall = SystemClock.elapsedRealtime()
         val deltaCpu = (nowCpu - previousCpuMs).coerceAtLeast(0)
         val deltaWall = (nowWall - previousWallMs).coerceAtLeast(1)
-        previousCpuMs = nowCpu; previousWallMs = nowWall
+        previousCpuMs = nowCpu
+        previousWallMs = nowWall
         val cores = Runtime.getRuntime().availableProcessors().coerceAtLeast(1)
         val cpu = ((deltaCpu.toDouble() / deltaWall.toDouble()) * 100.0 / cores).roundToInt().coerceIn(0, 100)
 
         val activity = context.getSystemService(Context.ACTIVITY_SERVICE) as ActivityManager
         val mem = ActivityManager.MemoryInfo().also(activity::getMemoryInfo)
-        val appRam = (Debug.getPss() / 1024).coerceAtLeast(0)
+        val appRam = ((Debug.getPss() / 1024L).coerceAtLeast(0L)).toInt()
 
         val battery = context.registerReceiver(null, IntentFilter(Intent.ACTION_BATTERY_CHANGED))
         val level = battery?.getIntExtra(BatteryManager.EXTRA_LEVEL, -1) ?: -1
