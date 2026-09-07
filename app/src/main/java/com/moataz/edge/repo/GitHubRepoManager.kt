@@ -15,12 +15,15 @@ import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.util.zip.ZipInputStream
 
-
 data class RepoSyncResult(
     val versionHash: String,
     val files: Int,
     val bytes: Long,
-    val entryPoint: String
+    val entryPoint: String,
+    val handler: String,
+    val runtime: String,
+    val mode: String,
+    val compatibility: String
 )
 
 class GitHubRepoManager(
@@ -42,10 +45,34 @@ class GitHubRepoManager(
             val digest = sha256(archive)
             val stats = unzipSafely(archive, staging)
             val sourceRoot = singleSourceRoot(staging)
-            validateApp(sourceRoot, app)
-            activate(app, sourceRoot)
-            store.recordSync(app.id, digest.take(16))
-            return RepoSyncResult(digest.take(16), stats.first, stats.second, app.entryPoint)
+            val report = RepoCompatibility.analyze(sourceRoot, app.entryPoint, app.handler)
+            store.recordCompatibility(app.id, report.toJson().toString())
+
+            require(report.compatible) {
+                val reasons = report.blockingErrors.joinToString(" • ") { it.detail }
+                "Repository is not compatible with local runtime: $reasons"
+            }
+
+            val resolvedApp = app.copy(
+                entryPoint = report.manifest.entryPoint,
+                handler = report.manifest.handler,
+                runtime = report.manifest.runtime,
+                mode = report.manifest.mode,
+                compatibilityJson = report.toJson().toString()
+            )
+            store.upsert(resolvedApp)
+            activate(resolvedApp, sourceRoot, digest.take(16))
+            store.recordSync(resolvedApp.id, digest.take(16))
+            return RepoSyncResult(
+                versionHash = digest.take(16),
+                files = stats.first,
+                bytes = stats.second,
+                entryPoint = resolvedApp.entryPoint,
+                handler = resolvedApp.handler,
+                runtime = resolvedApp.runtime,
+                mode = resolvedApp.mode,
+                compatibility = report.summary()
+            )
         } catch (error: Exception) {
             store.recordError(app.id, error.message ?: error.javaClass.simpleName)
             throw error
@@ -68,17 +95,22 @@ class GitHubRepoManager(
             return false
         }
         if (swap.exists()) swap.renameTo(previous)
-        store.recordSync(app.id, "rollback-${System.currentTimeMillis()}")
+        store.recordSync(app.id, File(current, ".edge-version").takeIf { it.isFile }?.readText()?.trim().orEmpty().ifBlank {
+            "rollback-${System.currentTimeMillis()}"
+        })
+        val report = RepoCompatibility.analyze(current, app.entryPoint, app.handler)
+        store.recordCompatibility(app.id, report.toJson().toString())
         return true
     }
 
-    fun compatibility(app: RepoAppConfig): String {
+    fun compatibilityReport(app: RepoAppConfig): CompatibilityReport? {
         val root = store.currentDir(app.id)
-        if (!root.isDirectory) return "غير مثبت"
-        return runCatching {
-            validateApp(root, app)
-            "متوافق مع Python 3.13 Runtime Pack"
-        }.getOrElse { it.message ?: "غير متوافق" }
+        if (!root.isDirectory) return null
+        return RepoCompatibility.analyze(root, app.entryPoint, app.handler)
+    }
+
+    fun compatibility(app: RepoAppConfig): String {
+        return compatibilityReport(app)?.summary() ?: "غير مثبت"
     }
 
     private fun downloadArchive(owner: String, repo: String, ref: String, target: File) {
@@ -175,32 +207,14 @@ class GitHubRepoManager(
         return if (children.size == 1 && children[0].isDirectory) children[0] else staging
     }
 
-    private fun validateApp(root: File, app: RepoAppConfig) {
-        val rootPath = root.canonicalPath + File.separator
-        val entry = File(root, app.entryPoint)
-        require(entry.canonicalPath.startsWith(rootPath)) { "Entry point escapes repository root" }
-        require(entry.isFile) { "Entry point not found: ${app.entryPoint}" }
-        require(entry.extension.lowercase() == "py") { "Only Python entry points are supported in production runtime" }
-
-        val requirements = File(root, "requirements.txt")
-        if (requirements.isFile) {
-            val unsupported = requirements.readLines()
-                .mapNotNull(::requirementName)
-                .filterNot { isBundledOrVendored(root, it) }
-                .distinct()
-            require(unsupported.isEmpty()) {
-                "Unsupported requirements: ${unsupported.joinToString()}. Vendor pure-Python packages under vendor/ or use bundled packages."
-            }
-        }
-    }
-
-    private fun activate(app: RepoAppConfig, sourceRoot: File) {
+    private fun activate(app: RepoAppConfig, sourceRoot: File, versionHash: String) {
         val root = store.appRoot(app.id)
         val current = store.currentDir(app.id)
         val previous = store.previousDir(app.id)
         val next = File(root, "next")
         next.deleteRecursively()
         copyDirectory(sourceRoot, next)
+        File(next, ".edge-version").writeText(versionHash)
         previous.deleteRecursively()
         if (current.exists()) require(current.renameTo(previous)) { "Unable to preserve previous repository version" }
         if (!next.renameTo(current)) {
@@ -218,27 +232,6 @@ class GitHubRepoManager(
             destination.parentFile?.mkdirs()
             source.inputStream().use { input -> destination.outputStream().use { output -> input.copyTo(output) } }
         }
-    }
-
-    private fun requirementName(line: String): String? {
-        val trimmed = line.substringBefore('#').trim()
-        if (trimmed.isBlank() || trimmed.startsWith("-") || trimmed.startsWith("git+")) return if (trimmed.startsWith("git+")) "git dependency" else null
-        return trimmed.substringBefore(';')
-            .substringBefore('[')
-            .split("==", ">=", "<=", "~=", "!=", ">", "<")
-            .firstOrNull()
-            ?.trim()
-            ?.lowercase()
-            ?.replace('_', '-')
-            ?.takeIf { it.isNotBlank() }
-    }
-
-    private fun isBundledOrVendored(root: File, requirement: String): Boolean {
-        if (requirement in BUNDLED_REQUIREMENTS) return true
-        val vendor = File(root, "vendor")
-        if (!vendor.isDirectory) return false
-        val names = listOf(requirement, requirement.replace('-', '_'), requirement.replace("-", ""))
-        return names.any { File(vendor, it).exists() }
     }
 
     private fun parseRepo(url: String): Pair<String, String> {
@@ -262,13 +255,8 @@ class GitHubRepoManager(
     }
 
     private companion object {
-        const val MAX_ARCHIVE_BYTES = 40L * 1024L * 1024L
-        const val MAX_UNPACKED_BYTES = 150L * 1024L * 1024L
-        const val MAX_FILES = 5_000
-        val BUNDLED_REQUIREMENTS = setOf(
-            "requests", "beautifulsoup4", "bs4", "python-dateutil", "dateutil",
-            "urllib3", "certifi", "idna", "charset-normalizer", "soupsieve",
-            "typing-extensions", "six"
-        )
+        const val MAX_ARCHIVE_BYTES = 80L * 1024L * 1024L
+        const val MAX_UNPACKED_BYTES = 300L * 1024L * 1024L
+        const val MAX_FILES = 10_000
     }
 }
