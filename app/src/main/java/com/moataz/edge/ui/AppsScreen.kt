@@ -50,6 +50,7 @@ import com.moataz.edge.runtime.WorkerCatalog
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import org.json.JSONObject
 import java.text.DateFormat
 import java.util.Date
 
@@ -83,7 +84,7 @@ internal fun AppsScreen(
         Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        AppsSectionTitle("مركز التطبيقات والـPlugins", "GitHub Repository Runtime + Connectors + Python Workers")
+        AppsSectionTitle("Local PaaS", "GitHub Apps + Telegram + Runtime Packs + Connectors")
 
         Surface(
             color = EdgeGold.copy(alpha = .08f),
@@ -91,22 +92,22 @@ internal fun AppsScreen(
             border = BorderStroke(1.dp, EdgeGold.copy(alpha = .28f)),
             modifier = Modifier.fillMaxWidth()
         ) {
-            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-                Text("تشغيل مستودعات GitHub بشكل مُدار", color = EdgeGold, fontWeight = FontWeight.SemiBold)
+            Column(Modifier.padding(14.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("استضافة محلية مُدارة بدل VPS للمشاريع الموثوقة", color = EdgeGold, fontWeight = FontWeight.SemiBold)
                 Text(
-                    "يتم تنزيل ZIP من GitHub، فحص المسارات والحجم والـrequirements، حفظ نسخة سابقة للـRollback، ثم تشغيل Python entry point داخل Runtime المضمن. لا يتم تنفيذ shell/npm/gradle أو pip عشوائي على الهاتف.",
+                    "المضيف يتولى GitHub Sync، Telegram Polling، Runtime، SQLite، التخزين، Health Check، Restart/Retry وRollback. المشروع يعرّف طريقة تشغيله عبر edge.json.",
                     color = EdgeMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
                 Text(
-                    "العقد: def process_update(raw_update, config_json) ويعيد dict أو str أو None. استخدم مستودعات موثوقة فقط.",
+                    "لا يتم تنزيل pip أو تشغيل Docker/Shell عشوائي على الهاتف. الحزم الأصلية يجب أن تكون ضمن Runtime Pack المبني داخل APK.",
                     color = EdgeMuted,
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         }
 
-        AppsSectionTitle("GitHub Access", "اختياري للمستودعات العامة ومطلوب للمستودعات الخاصة")
+        AppsSectionTitle("GitHub Access", "اختياري للعامة ومطلوب للمستودعات الخاصة")
         OutlinedTextField(
             value = githubToken,
             onValueChange = { githubToken = it },
@@ -120,21 +121,21 @@ internal fun AppsScreen(
                 runCatching {
                     config.saveGithubToken(githubToken)
                     githubToken = ""
-                    message = "تم حفظ GitHub Token داخل Android Keystore"
+                    message = "تم حفظ GitHub Token مشفرًا داخل Android Keystore"
                 }.onFailure { message = it.message.orEmpty() }
             },
             enabled = githubToken.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
         ) { Text("حفظ GitHub Token") }
 
-        AppsSectionTitle("إضافة مشروع GitHub", "حوّل مستودع Python إلى Worker/Bot على الهاتف")
+        AppsSectionTitle("إضافة مشروع GitHub", "إذا وجد edge.json فسيتم اكتشاف Runtime وEntry Point تلقائيًا")
         OutlinedTextField(repoName, { repoName = it }, Modifier.fillMaxWidth(), label = { Text("اسم التطبيق") }, singleLine = true)
         OutlinedTextField(repoUrl, { repoUrl = it }, Modifier.fillMaxWidth(), label = { Text("https://github.com/owner/repo") }, singleLine = true)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(repoRef, { repoRef = it }, Modifier.weight(1f), label = { Text("Branch / Tag") }, singleLine = true)
-            OutlinedTextField(entryPoint, { entryPoint = it }, Modifier.weight(1f), label = { Text("Entry point") }, singleLine = true)
+            OutlinedTextField(entryPoint, { entryPoint = it }, Modifier.weight(1f), label = { Text("Fallback Entry") }, singleLine = true)
         }
-        OutlinedTextField(handler, { handler = it }, Modifier.fillMaxWidth(), label = { Text("Handler function") }, singleLine = true)
+        OutlinedTextField(handler, { handler = it }, Modifier.fillMaxWidth(), label = { Text("Fallback Handler") }, singleLine = true)
         Button(
             onClick = {
                 runCatching {
@@ -144,13 +145,13 @@ internal fun AppsScreen(
                     repoRef = "main"
                     entryPoint = "edge_entry.py"
                     handler = "process_update"
-                    message = "تمت إضافة ${app.name}. اضغط مزامنة لتنزيله وفحصه."
+                    message = "تمت إضافة ${app.name}. اضغط تحليل ومزامنة لفحص المشروع وتفعيله."
                     onChanged()
                 }.onFailure { message = it.message.orEmpty() }
             },
             enabled = repoUrl.isNotBlank(),
             modifier = Modifier.fillMaxWidth()
-        ) { Text("إضافة المستودع") }
+        ) { Text("إضافة المشروع") }
 
         if (repoApps.isEmpty()) AppsEmpty("لا توجد تطبيقات GitHub بعد")
         repoApps.forEach { app ->
@@ -162,12 +163,14 @@ internal fun AppsScreen(
                 onToggle = { repoStore.setEnabled(app.id, it); onChanged() },
                 onSync = {
                     busyRepo = app.id
-                    message = "تتم مزامنة ${app.name}…"
+                    message = "يتم تنزيل وفحص ${app.name}…"
                     scope.launch {
                         val result = runCatching { withContext(Dispatchers.IO) { manager.sync(app) } }
                         message = result.fold(
-                            onSuccess = { "${app.name}: تم تفعيل ${it.versionHash} • ${it.files} ملف" },
-                            onFailure = { "${app.name}: ${it.message}" }
+                            onSuccess = {
+                                "${app.name}: READY • ${it.runtime} • ${it.mode} • ${it.versionHash} • ${it.files} ملف"
+                            },
+                            onFailure = { "${app.name}: BLOCKED • ${it.message}" }
                         )
                         busyRepo = null
                         onChanged()
@@ -187,10 +190,11 @@ internal fun AppsScreen(
         }
 
         HorizontalDivider()
-        AppsSectionTitle("Connector Plugins", "Telegram مدمج، ويمكن إضافة HTTP JSON أو Local Log كوجهة Route")
-        BuiltInPluginCard("Telegram", "Source + Destination", if (config.hasBotToken()) "مهيأ" else "يحتاج Bot Token", config.hasBotToken())
-        BuiltInPluginCard("GitHub Repo Runtime", "Processor", "Managed Python 3.13", true)
-        BuiltInPluginCard("Python Runtime Pack", "Processor", "${WorkerCatalog.workers.size} Workers مدمجة", true)
+        AppsSectionTitle("Connector Plugins", "وجهات قابلة للربط من شاشة التدفق")
+        BuiltInPluginCard("Telegram", "Source + Destination", if (config.hasBotToken()) "READY" else "BOT TOKEN مطلوب", config.hasBotToken())
+        BuiltInPluginCard("GitHub Repo Runtime", "Managed Service", "Python 3.12", true)
+        BuiltInPluginCard("Persistent Async Runtime", "startup / health / shutdown", "READY", true)
+        BuiltInPluginCard("Per-App SQLite + Storage", "Local state", "READY", true)
 
         plugins.forEach { plugin ->
             PluginCard(
@@ -234,7 +238,7 @@ internal fun AppsScreen(
             modifier = Modifier.fillMaxWidth()
         ) { Text("إضافة Local Log Plugin") }
 
-        AppsSectionTitle("Runtime Pack", "الحزم المتاحة لأي GitHub Repo بدون pip على الهاتف")
+        AppsSectionTitle("Runtime Pack", "مكتبات مبنية داخل APK ولا تحتاج pip على الهاتف")
         WorkerCatalog.runtimeLibraries.forEach { lib ->
             Card(colors = CardDefaults.cardColors(containerColor = EdgeSurface), modifier = Modifier.fillMaxWidth()) {
                 Row(Modifier.padding(14.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -267,6 +271,22 @@ private fun RepoAppCard(
     onRollback: () -> Unit,
     onDelete: () -> Unit
 ) {
+    val report = remember(app.compatibilityJson) {
+        runCatching { JSONObject(app.compatibilityJson) }.getOrNull()
+    }
+    val compatible = report?.optBoolean("compatible", false) == true
+    val state = when {
+        compatible -> "READY"
+        app.compatibilityJson.isNotBlank() -> "BLOCKED"
+        installed -> "INSTALLED"
+        else -> "NOT SYNCED"
+    }
+    val stateColor = when (state) {
+        "READY" -> EdgeMint
+        "BLOCKED" -> EdgeDanger
+        else -> EdgeWarning
+    }
+
     Card(colors = CardDefaults.cardColors(containerColor = EdgeSurfaceHigh), modifier = Modifier.fillMaxWidth()) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -276,18 +296,50 @@ private fun RepoAppCard(
                     Text(app.name, style = MaterialTheme.typography.titleMedium)
                     Text(app.repositoryUrl, color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
                 }
+                Surface(color = stateColor.copy(alpha = .12f), shape = CircleShape) {
+                    Text(state, Modifier.padding(horizontal = 10.dp, vertical = 6.dp), color = stateColor, style = MaterialTheme.typography.labelSmall)
+                }
+                Spacer(Modifier.width(8.dp))
                 Switch(checked = app.enabled, onCheckedChange = onToggle)
             }
+
             Text("${app.ref} • ${app.entryPoint} → ${app.handler}", color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
-            Text(if (installed) compatibility else "لم تتم المزامنة بعد", color = if (installed) EdgeMint else EdgeWarning, style = MaterialTheme.typography.bodySmall)
+            Text("${app.runtime} • ${app.mode}", color = EdgeGold, style = MaterialTheme.typography.bodySmall)
+            Text(if (installed) compatibility else "سيتم تنزيل المستودع وتحليل edge.json / pyproject.toml عند المزامنة", color = stateColor, style = MaterialTheme.typography.bodySmall)
+
+            val checks = report?.optJSONArray("checks")
+            if (checks != null && checks.length() > 0) {
+                Surface(color = EdgeSurface, shape = MaterialTheme.shapes.small, modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(10.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
+                        Text("Compatibility Report", color = EdgeText, fontWeight = FontWeight.SemiBold, style = MaterialTheme.typography.labelLarge)
+                        for (index in 0 until checks.length()) {
+                            val check = checks.optJSONObject(index) ?: continue
+                            val ok = check.optBoolean("ok", false)
+                            val blocking = check.optBoolean("blocking", true)
+                            val marker = when {
+                                ok -> "✓"
+                                blocking -> "✕"
+                                else -> "!"
+                            }
+                            Text(
+                                "$marker ${check.optString("detail")}",
+                                color = if (ok) EdgeMint else if (blocking) EdgeDanger else EdgeWarning,
+                                style = MaterialTheme.typography.bodySmall
+                            )
+                        }
+                    }
+                }
+            }
+
             if (app.versionHash.isNotBlank()) {
                 val date = if (app.lastSyncedAt > 0) DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(app.lastSyncedAt)) else "—"
                 Text("نسخة ${app.versionHash} • $date", color = EdgeMuted, style = MaterialTheme.typography.bodySmall)
             }
             if (app.lastError.isNotBlank()) Text(app.lastError, color = EdgeDanger, style = MaterialTheme.typography.bodySmall)
             Text("Worker ID: ${app.workerId}", color = EdgeGold, style = MaterialTheme.typography.bodySmall)
+
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Button(onClick = onSync, enabled = !busy) { Text(if (busy) "انتظر…" else "مزامنة") }
+                Button(onClick = onSync, enabled = !busy) { Text(if (busy) "جارٍ الفحص…" else "تحليل ومزامنة") }
                 OutlinedButton(onClick = onRollback, enabled = !busy && installed) { Text("Rollback") }
                 TextButton(onClick = onDelete, enabled = !busy) { Text("حذف", color = EdgeDanger) }
             }
